@@ -1,22 +1,42 @@
+    
+#include "ThingSpeak.h"
+#include <WiFi.h>
+#include "time.h"
 
 byte sensorPin = 27; //water flow meter connected to pin 27 of esp32
-// The hall-effect flow sensor outputs approximately 4.5 pulses per second per
-// litre/minute of flow.
-float calibrationFactor = 4.5;
+byte relay = 12;     // relay is connected to pin 12     
 
-volatile byte pulseCount;
+  
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 19820;
+const int   daylightOffset_sec = 0;
+int m;
+
+float calibrationFactor = 4.5; // The hall-effect flow sensor outputs approximately 4.5 pulses per second per
+
+volatile byte pulseCount;  
+
 float flowRate;
 unsigned int flowMilliLitres;
 float totalMilliLitres;
 float in_L = 0.00;
 int l;
+
 unsigned long oldTime;
+char ssid[] = "Aibot";                            // your network SSID (name) 
+char pass[] = "2a2a21c10366584";                  // your network password
+int keyIndex = 0;                                 // your network key Index number (needed only for WEP)
+unsigned long myChannelNumber = 1003424;
+const char * myWriteAPIKey = "2QT5VXM9TTA03AMU";
+
+ WiFiClient  client;
 
 void setup() {
   
   Serial.begin(9600);  //Initialize serial
   
   pinMode(sensorPin, INPUT);
+  pinMode(relay,OUTPUT);
   digitalWrite(sensorPin, HIGH);
   
   pulseCount        = 0;
@@ -30,11 +50,29 @@ void setup() {
     state to LOW state)*/
     
   attachInterrupt(sensorPin, pulseCounter, FALLING);
-}
-
- void loop(){
   
-   /* -----------------------------WATER FLOW SENSOR----------------------------*/
+  WiFi.mode(WIFI_STA);   
+  ThingSpeak.begin(client);          // Initialize ThingSpeak
+}     
+
+void loop() {
+
+  /*------------------------------Connect or reconnect to WiFi-----------------------*/
+ {
+  if(WiFi.status() != WL_CONNECTED){
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(ssid);
+    while(WiFi.status() != WL_CONNECTED){
+      WiFi.begin(ssid, pass);        // Connect to WPA/WPA2 network. Change this line if using open or WEP network
+      Serial.print(".");
+      delay(5000);     
+    } 
+    Serial.println("\nConnected.");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  }
+ }
+  /* -----------------------------WATER FLOW SENSOR----------------------------*/
   if((millis() - oldTime) > 1000)    // Only process counters once per second
   { 
     /* Disable the interrupt while calculating flow rate and sending the value to
@@ -65,6 +103,8 @@ void setup() {
     
     totalMilliLitres += flowMilliLitres; 
     unsigned int frac;
+
+    printLocalTime();     // To print time
     
     /*Print the flow rate for this second in litres / minute*/
     
@@ -84,6 +124,25 @@ void setup() {
     Serial.print("total usage---------------:");
     Serial.print(l);
     Serial.println(" L");
+    
+    
+
+    /*to check water usage limit */
+      if(in_L >= 3)
+    {
+      Serial.print("limit  reached");
+        digitalWrite(relay,HIGH);
+        Serial.println("");
+         Serial.println("");
+    }
+    else{
+      Serial.print("limit not reached");
+      digitalWrite(relay,LOW);
+       Serial.println("");
+        Serial.print("");
+    }
+     
+   
     /*Reset the pulse counter so we can start incrementing again*/
     
     pulseCount = 0;
@@ -92,10 +151,41 @@ void setup() {
     
     attachInterrupt(sensorPin, pulseCounter, FALLING);
   }
+  /*----------------------------- Write to ThingSpeak--------------------------*/
+ {
+  int x = ThingSpeak.writeField(myChannelNumber,1, flowRate, myWriteAPIKey);
+          ThingSpeak.writeField(myChannelNumber,2, l, myWriteAPIKey);
+  if(x == 200){
+    Serial.println("Channel update successful.");
+  }
+  else{
+    Serial.println("Problem updating channel. HTTP error code " + String(x));
+  }
+  delay(15000); // Wait 15 seconds to update the channel again
  }
-  
-void pulseCounter()
+   
+}
+ void pulseCounter()
 {
   // Increment the pulse counter
   pulseCount++;
 }
+
+void printLocalTime()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+   Serial.print("Time----------------------:");
+  Serial.println(&timeinfo, " %H:%M:%S");
+  m = timeinfo.tm_hour;
+  if(m >=0)
+  {
+  totalMilliLitres = 0.00;
+  } 
+
+}
+
+ 
